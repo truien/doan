@@ -1,0 +1,9 @@
+TownCentreXVID_-_Ivan_Matskevich__1080p__h264_.mp4
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+.vscode/
+env/
+.idea/
+*.log
