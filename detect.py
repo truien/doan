@@ -12,8 +12,7 @@ YOLO_PATH = "model/yolo_trained.pt"
 BOTSORT_PATH = "model/osnet_x0_25_msmt17.pt"
 
 COOLDOWN_FRAMES = 1000
-CENTER_RADIUS = 10
-CENTER_THRESHOLD = 5
+CENTER_THRESHOLD = 100
 
 
 def log_event(video_name, track_id, direction):
@@ -66,15 +65,19 @@ def segments_intersect(p1, p2, a, b):
 
 def process_frame_stream(video_path, line_points, direction_points):
     """Đếm người qua line theo tâm + hiển thị vùng nhận diện"""
+    # an
     if not os.path.exists(video_path):
         print(f"❌ Video not found: {video_path}")
         return
 
     try:
+        # yolo có hỗ trợ mps không
+
         model = YOLO(YOLO_PATH)
         tracker = BotSort(
             reid_weights=Path(BOTSORT_PATH),
-            device="cpu",
+            # dùng apple mps nếu có
+            device="mps",
             max_age=9999,
             track_buffer=9999,
             half=False,
@@ -86,15 +89,14 @@ def process_frame_stream(video_path, line_points, direction_points):
             return
 
         count_in, count_out = 0, 0
-        last_side = {}
         prev_center = {}
         last_count_frame = {}
         frame_count = 0
         video_name = os.path.basename(video_path)
 
         a, b = line_points
-        ref_out, ref_in = direction_points
-        reference_side = -side_of_line(ref_out, a, b)  # ✅ đảo lại hướng đúng
+        ref_in, ref_out = direction_points
+        reference_side = side_of_line(ref_out, a, b)
 
         while True:
             ret, frame = cap.read()
@@ -104,7 +106,8 @@ def process_frame_stream(video_path, line_points, direction_points):
 
             frame_count += 1
             try:
-                results = model.predict(frame, conf=0.5, verbose=False)
+                results = model.predict(
+                    frame, conf=0.5, verbose=False)
                 boxes = results[0].boxes
                 if boxes is None or len(boxes) == 0:
                     continue
@@ -127,7 +130,6 @@ def process_frame_stream(video_path, line_points, direction_points):
 
                     # --- Kiểm tra vị trí ---
                     curr_side = side_of_line(center, a, b)
-                    prev_side = last_side.get(tid, curr_side)
                     crossed = False
 
                     if tid in prev_center:
@@ -138,18 +140,14 @@ def process_frame_stream(video_path, line_points, direction_points):
                     near_line = point_near_segment(
                         center, a, b, max_dist=CENTER_THRESHOLD)
 
-                    # --- Vẽ vùng nhận quanh tâm ---
-                    color = (255, 255, 0)  # xanh nhạt mặc định
+                    color = (255, 255, 0)
                     if near_line:
-                        color = (0, 255, 255)  # vàng khi gần line
-                    cv2.circle(frame, (int(cx), int(cy)),
-                               CENTER_RADIUS, color, 2)
+                        color = (0, 255, 255)
 
-                    # --- Vẽ tâm thật ---
                     cv2.circle(frame, (int(cx), int(cy)),
-                               5, (255, 255, 255), -1)
-
-                    # --- Đếm khi thật sự cắt line ---
+                               CENTER_THRESHOLD, color, -1)
+                    cv2.putText(frame, f'ID: {tid}', (int(x1), int(y1)-10),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
                     if crossed and near_line:
                         last_f = last_count_frame.get(tid, -9999)
                         if frame_count - last_f > COOLDOWN_FRAMES:
@@ -164,8 +162,6 @@ def process_frame_stream(video_path, line_points, direction_points):
                                 cv2.circle(frame, (int(cx), int(cy)),
                                            8, (0, 0, 255), -1)
                             last_count_frame[tid] = frame_count
-
-                    last_side[tid] = curr_side
 
             except Exception as e:
                 print(f"⚠️ Detection error: {e}")
